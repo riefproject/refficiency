@@ -55,6 +55,11 @@ class GoogleSheetsService:
             for key, value in transaction_data.items():
                 if key in headers:
                     index = headers.index(key)
+                    # Khusus untuk tanggal, pastikan formatnya benar
+                    if key == "Tanggal" and value:
+                        # Jika value adalah string datetime, ambil bagian tanggal saja
+                        if " " in str(value):
+                            value = str(value).split(" ")[0]
                     new_row[index] = str(value) if value else ""
                     logger.debug(f"Mapping {key} -> {value} at index {index}")
             

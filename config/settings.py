@@ -27,3 +27,11 @@ def get_allowed_user_ids():
         except ValueError:
             logging.error("⚠️ Error: Format ALLOWED_TELEGRAM_IDS tidak valid.")
     return ALLOWED_USER_IDS
+
+# Setup logging dengan padding untuk semua logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)-30s - %(levelname)-7s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
