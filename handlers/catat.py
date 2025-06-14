@@ -15,6 +15,13 @@ async def catat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"⚠️ Akses ditolak untuk /catat dari user ID: {user_id}")
         return
 
+    # Trigger auto-update dashboard untuk setiap pesan /catat (apapun isinya)
+    try:
+        sheets_service.update_dashboard_data()
+        logger.info("🔄 Dashboard auto-updated after /catat command received")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to auto-update dashboard: {e}")
+
     try:
         args = context.args
         if len(args) < 3:
@@ -79,7 +86,7 @@ async def catat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet_data = transaction.to_sheet_data()
         logger.info(f"📊 Data untuk sheets: {sheet_data}")
         
-        # Simpan ke Google Sheets
+        # Simpan ke Google Sheets (ini juga akan trigger update dashboard lagi, tapi tidak masalah)
         sheets_service.add_transaction(sheet_data)
         
         tanggal_display = tanggal_input if tanggal_input else "Hari ini"

@@ -29,7 +29,22 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("catat", catat))
     application.add_handler(CommandHandler("laporan", laporan))
+    
+    # Handler untuk semua pesan teks lainnya (bukan command yang sudah didefinisikan)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
+    
+    # Handler untuk command yang tidak dikenal (akan trigger update dashboard)
+    async def handle_unknown_command(update, context):
+        # Trigger auto-update dashboard setiap ada command tidak dikenal
+        try:
+            sheets_service.update_dashboard_data()
+            logger.info("🔄 Dashboard auto-updated after unknown command received")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to auto-update dashboard: {e}")
+        
+        await unknown(update, context)
+    
+    application.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command))
     application.add_error_handler(error_handler)
 
     # Jalankan Bot
