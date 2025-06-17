@@ -1,332 +1,213 @@
-from telegram import Update
-from telegram.ext import ContextTypes
-from services.auth import auth_service
-from services.gsheets import sheets_service
-from datetime import datetime, timedelta
+"""
+Laporan Handler
+==============
+
+Handler untuk generate berbagai jenis laporan keuangan.
+"""
+
 import logging
-import calendar
+from datetime import datetime
+from calendar import month_name
+from services.gsheets import GoogleSheetsService
 
 logger = logging.getLogger(__name__)
 
-async def laporan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not auth_service.user_is_allowed(user_id):
-        await update.message.reply_text("Maaf, Anda tidak diizinkan menggunakan bot ini.",parse_mode='Markdown')
-        logger.warning(f"⚠️ Akses ditolak untuk /laporan dari user ID: {user_id}")
-        return
-
-    try:
-        args = context.args
-        now = datetime.now()
+class LaporanService:
+    def __init__(self, sheets_service: GoogleSheetsService):
+        self.sheets_service = sheets_service
+    
+    def generate_report(self, period: str, year: int = None, month: int = None) -> str:
+        """
+        Generate laporan berdasarkan period yang diminta.
         
-        if len(args) == 0:
-            await update.message.reply_text(
-                "Format salah. Gunakan:\n"
-                "`/laporan [bulan]` - Laporan bulan terakhir\n"
-                "`/laporan [tahun]` - Laporan tahun terakhir\n"
-                "`/laporan [bulan] [tahun]` - Laporan bulan dan tahun spesifik\n\n"
-                "Contoh:\n"
-                "`/laporan januari`\n"
-                "`/laporan 2024`\n"
-                "`/laporan februari 2024`",
-                parse_mode='Markdown'
-            )
-            return
-
-        if len(args) == 1:
-            # Cek apakah input adalah tahun atau bulan
-            arg = args[0].lower()
-            
-            # Coba parse sebagai tahun
-            try:
-                year = int(arg)
-                if year < 1900 or year > 2100:
-                    raise ValueError("Tahun tidak valid")
-                
-                # Laporan tahunan
-                await generate_yearly_report(update, year, now)
-                return
-                
-            except ValueError:
-                # Bukan tahun, anggap sebagai bulan
-                month_num = parse_month_name(arg)
-                if month_num is None:
-                    await update.message.reply_text(
-                        "Format bulan tidak valid. Gunakan nama bulan dalam bahasa Indonesia.\n"
-                        "Contoh: januari, februari, maret, dst.",
-                        parse_mode='Markdown'
-                    )
-                    return
-                
-                # Tentukan tahun (tahun lalu jika bulan sudah lewat tahun ini)
-                if month_num > now.month:
-                    year = now.year - 1
-                else:
-                    year = now.year
-                
-                await generate_monthly_report(update, month_num, year, now)
-                return
-
-        elif len(args) == 2:
-            # Format: bulan tahun
-            month_name = args[0].lower()
-            month_num = parse_month_name(month_name)
-            
-            if month_num is None:
-                await update.message.reply_text(
-                    "Format bulan tidak valid. Gunakan nama bulan dalam bahasa Indonesia.\n"
-                    "Contoh: januari, februari, maret, dst.",
-                    parse_mode='Markdown'
-                )
-                return
-            
-            try:
-                year = int(args[1])
-                if year < 1900 or year > 2100:
-                    raise ValueError("Tahun tidak valid")
-            except ValueError:
-                await update.message.reply_text("Format tahun tidak valid.",parse_mode='Markdown')
-                return
-            
-            # Cek apakah bulan dan tahun sudah berlangsung
-            target_date = datetime(year, month_num, 1)
-            if target_date > now:
-                month_name_cap = calendar.month_name[month_num]
-                await update.message.reply_text(
-                    f"❌ Bulan {month_name_cap} dan tahun {year} belum berlangsung.",
-                    parse_mode='Markdown'
-                )
-                return
-            
-            await generate_monthly_report(update, month_num, year, now)
-            return
-
-        else:
-            await update.message.reply_text("Terlalu banyak parameter. Maksimal 2 parameter.",parse_mode='Markdown')
-
-    except Exception as e:
-        await update.message.reply_text(f"Terjadi error saat membuat laporan: {e}",parse_mode='Markdown')
-        logger.error(f"❌ Error saat membuat laporan untuk user {user_id}: {e}", exc_info=True)
-
-def parse_month_name(month_name):
-    """Konversi nama bulan Indonesia ke nomor bulan"""
-    months = {
-        'januari': 1, 'februari': 2, 'maret': 3, 'april': 4,
-        'mei': 5, 'juni': 6, 'juli': 7, 'agustus': 8,
-        'september': 9, 'oktober': 10, 'november': 11, 'desember': 12
-    }
-    return months.get(month_name.lower())
-
-def get_month_name(month_num):
-    """Konversi nomor bulan ke nama bulan Indonesia"""
-    months = {
-        1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April',
-        5: 'Mei', 6: 'Juni', 7: 'Juli', 8: 'Agustus',
-        9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
-    }
-    return months.get(month_num, 'Unknown')
-
-async def generate_monthly_report(update: Update, month: int, year: int, now: datetime):
-    """Generate laporan bulanan"""
-    try:
-        if not sheets_service.ensure_connection():
-            await update.message.reply_text("❌ Tidak dapat terhubung ke Google Sheets.",parse_mode='Markdown')
-            return
-
-        # Ambil semua data dari sheet
-        all_records = sheets_service.sh.get_all_records()
+        Args:
+            period: 'bulanan' atau 'tahunan'
+            year: tahun laporan (optional, default tahun sekarang)
+            month: bulan laporan untuk laporan bulanan (1-12)
         
-        # Filter data berdasarkan bulan dan tahun
-        monthly_data = []
-        for record in all_records:
-            if not record.get('Tanggal'):
-                continue
+        Returns:
+            str: Formatted report text
+        """
+        try:
+            if not self.sheets_service.ensure_connection():
+                return "❌ Tidak dapat terhubung ke Google Sheets untuk mengambil data laporan."
+            
+            current_year = datetime.now().year
+            target_year = year or current_year
+            
+            if period == 'bulanan':
+                return self._generate_monthly_report(target_year, month)
+            elif period == 'tahunan':
+                return self._generate_annual_report(target_year)
+            else:
+                return "❌ Jenis laporan tidak dikenali. Gunakan 'bulanan' atau 'tahunan'."
                 
+        except Exception as e:
+            logger.error(f"Error generating report: {e}")
+            return f"❌ Terjadi kesalahan saat membuat laporan: {str(e)}"
+    
+    def _generate_monthly_report(self, year: int, month: int = None) -> str:
+        """Generate laporan bulanan."""
+        try:
+            current_month = datetime.now().month
+            target_month = month or current_month
+            
+            if not (1 <= target_month <= 12):
+                return "❌ Bulan tidak valid. Gunakan angka 1-12."
+            
+            # Format sheet name (M/YY)
+            year_short = str(year)[2:]  # Get last 2 digits
+            sheet_name = f"{target_month}/{year_short}"
+            month_name_str = month_name[target_month]
+            
             try:
-                # Parse tanggal (format: YYYY-MM-DD HH:MM:SS)
-                date_str = record['Tanggal'].split(' ')[0]  # Ambil bagian tanggal saja
-                record_date = datetime.strptime(date_str, '%Y-%m-%d')
+                worksheet = self.sheets_service.spreadsheet.worksheet(sheet_name)
+            except:
+                return f"📊 Tidak ada data transaksi untuk {month_name_str} {year}."
+            
+            # Get summary data
+            summary = self.sheets_service._get_sheet_summary(worksheet)
+            
+            # Get all transactions for detailed breakdown
+            all_data = worksheet.get_all_records()
+            
+            # Build report
+            report = f"📊 *LAPORAN BULANAN - {month_name_str.upper()} {year}*\n"
+            report += "=" * 40 + "\n\n"
+            
+            # Summary section
+            report += "💰 *RINGKASAN KEUANGAN*\n"
+            report += f"- Total Pemasukan: Rp {summary['total_income']:,.0f}\n"
+            report += f"- Total Pengeluaran: Rp {summary['total_expenditure']:,.0f}\n"
+            report += f"- Selisih Bersih: Rp {summary['net_difference']:,.0f}\n\n"
+            
+            # Category breakdown
+            if summary['categories']:
+                report += "📈 *PENGELUARAN PER KATEGORI*\n"
+                sorted_categories = sorted(summary['categories'].items(), key=lambda x: x[1], reverse=True)
+                for category, amount in sorted_categories:
+                    percentage = (amount / summary['total_expenditure'] * 100) if summary['total_expenditure'] > 0 else 0
+                    report += f"- {category}: Rp {amount:,.0f} ({percentage:.1f}%)\n"
+                report += "\n"
+            
+            # Recent transactions (last 5)
+            if all_data:
+                report += "📝 *5 TRANSAKSI TERAKHIR*\n"
+                recent_transactions = all_data[-5:] if len(all_data) >= 5 else all_data
+                for transaction in reversed(recent_transactions):
+                    tanggal = transaction.get('Tanggal', '')
+                    kategori = transaction.get('Kategori', '')
+                    deskripsi = transaction.get('Deskripsi', '')
+                    pemasukan = transaction.get('Pemasukan', '')
+                    pengeluaran = transaction.get('Pengeluaran', '')
+                    
+                    if pemasukan:
+                        report += f"- {tanggal} | {kategori} | +Rp {pemasukan:,.0f}"
+                    elif pengeluaran:
+                        report += f"- {tanggal} | {kategori} | -Rp {pengeluaran:,.0f}"
+                    
+                    if deskripsi:
+                        report += f" | {deskripsi}"
+                    report += "\n"
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"Error generating monthly report: {e}")
+            return f"❌ Gagal membuat laporan bulanan: {str(e)}"
+    
+    def _generate_annual_report(self, year: int) -> str:
+        """Generate laporan tahunan."""
+        try:
+            # Get all monthly data for the year
+            monthly_data = self.sheets_service.get_monthly_sheets()
+            year_data = {k: v for k, v in monthly_data.items() if v['year'] == year}
+            
+            if not year_data:
+                return f"📊 Tidak ada data transaksi untuk tahun {year}."
+            
+            # Calculate annual totals
+            total_income = 0
+            total_expenditure = 0
+            all_categories = {}
+            monthly_summaries = {}
+            
+            for sheet_name, data in year_data.items():
+                month_num = data['month']
+                summary = data['data']
                 
-                if record_date.month == month and record_date.year == year:
-                    monthly_data.append(record)
-            except:
-                continue
-
-        # Hitung total pemasukan dan pengeluaran
-        total_pemasukan = 0
-        total_pengeluaran = 0
-        kategori_pemasukan = {}
-        kategori_pengeluaran = {}
-
-        for record in monthly_data:
-            pemasukan = record.get('Pemasukan', 0)
-            pengeluaran = record.get('Pengeluaran', 0)
-            kategori = record.get('Kategori', 'Lainnya')
-
-            # Konversi ke int jika berupa string
-            try:
-                if pemasukan and str(pemasukan).replace(',', '').replace('.', '').isdigit():
-                    pemasukan = int(str(pemasukan).replace(',', '').replace('.', ''))
-                    total_pemasukan += pemasukan
-                    kategori_pemasukan[kategori] = kategori_pemasukan.get(kategori, 0) + pemasukan
+                total_income += summary['total_income']
+                total_expenditure += summary['total_expenditure']
+                
+                # Aggregate categories
+                for category, amount in summary['categories'].items():
+                    all_categories[category] = all_categories.get(category, 0) + amount
+                
+                # Store monthly summary
+                monthly_summaries[month_num] = summary
+            
+            net_difference = total_income - total_expenditure
+            
+            # Build report
+            report = f"📊 *LAPORAN TAHUNAN - {year}*\n"
+            report += "----------------------------------------------------\n\n"
+            
+            # Annual summary
+            report += "💰 *RINGKASAN TAHUNAN*\n"
+            report += f"- Total Pemasukan\t: Rp {total_income:,.0f}\n"
+            report += f"- Total Pengeluaran\t: Rp {total_expenditure:,.0f}\n"
+            report += f"- Selisih Bersih\t: Rp {net_difference:,.0f}\n\n"
+            
+            # Monthly breakdown
+            report += "📅 *BREAKDOWN BULANAN*\n"
+            for month_num in range(1, 13):
+                month_name_str = month_name[month_num][:3]  # Abbreviated month name
+                if month_num in monthly_summaries:
+                    summary = monthly_summaries[month_num]
+                    report += f"- {month_name_str}: +Rp {summary['total_income']:,.0f} | -Rp {summary['total_expenditure']:,.0f} | "
+                    report += f"Net: Rp {summary['net_difference']:,.0f}\n"
                 else:
-                    pemasukan = 0
-            except:
-                pemasukan = 0
-
-            try:
-                if pengeluaran and str(pengeluaran).replace(',', '').replace('.', '').isdigit():
-                    pengeluaran = int(str(pengeluaran).replace(',', '').replace('.', ''))
-                    total_pengeluaran += pengeluaran
-                    kategori_pengeluaran[kategori] = kategori_pengeluaran.get(kategori, 0) + pengeluaran
-                else:
-                    pengeluaran = 0
-            except:
-                pengeluaran = 0
-
-        # Format laporan
-        month_name = get_month_name(month)
-        saldo = total_pemasukan - total_pengeluaran
-        
-        report = f"📊 **LAPORAN {month_name.upper()} {year}**\n\n"
-        report += f"💰 Total Pemasukan: Rp {total_pemasukan:,}\n"
-        report += f"💸 Total Pengeluaran: Rp {total_pengeluaran:,}\n"
-        report += f"📈 Saldo: Rp {saldo:,}\n\n"
-
-        # Detail kategori pemasukan
-        if kategori_pemasukan:
-            report += "📈 **Detail Pemasukan:**\n"
-            for kat, jumlah in sorted(kategori_pemasukan.items(), key=lambda x: x[1], reverse=True):
-                report += f"• {kat}: Rp {jumlah:,}\n"
+                    report += f"- {month_name_str}: Tidak ada data\n"
             report += "\n"
-
-        # Detail kategori pengeluaran
-        if kategori_pengeluaran:
-            report += "📉 **Detail Pengeluaran:**\n"
-            for kat, jumlah in sorted(kategori_pengeluaran.items(), key=lambda x: x[1], reverse=True):
-                report += f"• {kat}: Rp {jumlah:,}\n"
-            report += "\n"
-
-        report += f"📝 Total Transaksi: {len(monthly_data)}"
-
-        await update.message.reply_text(report, parse_mode='Markdown')
-        logger.info(f"📊 Laporan bulanan dikirim: {month_name} {year} untuk user {update.effective_user.id}")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error saat membuat laporan bulanan: {e}", parse_mode='Markdown')
-        logger.error(f"❌ Error laporan bulanan: {e}", exc_info=True)
-
-async def generate_yearly_report(update: Update, year: int, now: datetime):
-    """Generate laporan tahunan"""
-    try:
-        # Cek apakah tahun sudah berlangsung
-        if year > now.year:
-            await update.message.reply_text(f"❌ Tahun {year} belum berlangsung.",parse_mode='Markdown')
-            return
-
-        if not sheets_service.ensure_connection():
-            await update.message.reply_text("❌ Tidak dapat terhubung ke Google Sheets.", parse_mode='Markdown')
-            return
-
-        # Ambil semua data dari sheet
-        all_records = sheets_service.sh.get_all_records()
-        
-        # Filter data berdasarkan tahun
-        yearly_data = []
-        for record in all_records:
-            if not record.get('Tanggal'):
-                continue
-                
-            try:
-                # Parse tanggal (format: YYYY-MM-DD HH:MM:SS)
-                date_str = record['Tanggal'].split(' ')[0]  # Ambil bagian tanggal saja
-                record_date = datetime.strptime(date_str, '%Y-%m-%d')
-                
-                if record_date.year == year:
-                    yearly_data.append(record)
-            except:
-                continue
-
-        # Hitung total pemasukan dan pengeluaran
-        total_pemasukan = 0
-        total_pengeluaran = 0
-        monthly_summary = {}
-        kategori_pemasukan = {}
-        kategori_pengeluaran = {}
-
-        for record in yearly_data:
-            pemasukan = record.get('Pemasukan', 0)
-            pengeluaran = record.get('Pengeluaran', 0)
-            kategori = record.get('Kategori', 'Lainnya')
             
-            # Ambil bulan untuk summary bulanan
-            try:
-                date_str = record['Tanggal'].split(' ')[0]
-                record_date = datetime.strptime(date_str, '%Y-%m-%d')
-                month_name = get_month_name(record_date.month)
+            # Top categories
+            if all_categories:
+                report += "📈 *TOP 5 KATEGORI PENGELUARAN*\n"
+                sorted_categories = sorted(all_categories.items(), key=lambda x: x[1], reverse=True)[:5]
+                for i, (category, amount) in enumerate(sorted_categories, 1):
+                    percentage = (amount / total_expenditure * 100) if total_expenditure > 0 else 0
+                    report += f"{i}. {category}: Rp {amount:,.0f} ({percentage:.1f}%)\n"
+                report += "\n"
+            
+            # Financial health indicators
+            report += "🏥 *INDIKATOR KESEHATAN KEUANGAN*\n"
+            if total_income > 0:
+                savings_rate = (net_difference / total_income * 100)
+                if savings_rate > 20:
+                    health_status = "Sangat Baik ✅"
+                elif savings_rate > 10:
+                    health_status = "Baik 👍"
+                elif savings_rate > 0:
+                    health_status = "Cukup ⚠️"
+                else:
+                    health_status = "Perlu Perbaikan ❌"
                 
-                if month_name not in monthly_summary:
-                    monthly_summary[month_name] = {'pemasukan': 0, 'pengeluaran': 0}
-            except:
-                month_name = 'Unknown'
+                report += f"- Tingkat Tabungan: {savings_rate:.1f}% ({health_status})\n"
+                report += f"- Rata-rata Pengeluaran/Bulan: Rp {total_expenditure/12:,.0f}\n"
+                report += f"- Rata-rata Pemasukan/Bulan: Rp {total_income/12:,.0f}\n"
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"Error generating annual report: {e}")
+            return f"❌ Gagal membuat laporan tahunan: {str(e)}"
 
-            # Konversi ke int jika berupa string
-            try:
-                if pemasukan and str(pemasukan).replace(',', '').replace('.', '').isdigit():
-                    pemasukan = int(str(pemasukan).replace(',', '').replace('.', ''))
-                    total_pemasukan += pemasukan
-                    kategori_pemasukan[kategori] = kategori_pemasukan.get(kategori, 0) + pemasukan
-                    if month_name in monthly_summary:
-                        monthly_summary[month_name]['pemasukan'] += pemasukan
-                else:
-                    pemasukan = 0
-            except:
-                pemasukan = 0
+# Create service instance that can be imported
+laporan_service = None
 
-            try:
-                if pengeluaran and str(pengeluaran).replace(',', '').replace('.', '').isdigit():
-                    pengeluaran = int(str(pengeluaran).replace(',', '').replace('.', ''))
-                    total_pengeluaran += pengeluaran
-                    kategori_pengeluaran[kategori] = kategori_pengeluaran.get(kategori, 0) + pengeluaran
-                    if month_name in monthly_summary:
-                        monthly_summary[month_name]['pengeluaran'] += pengeluaran
-                else:
-                    pengeluaran = 0
-            except:
-                pengeluaran = 0
-
-        # Format laporan
-        saldo = total_pemasukan - total_pengeluaran
-        
-        report = f"📊 **LAPORAN TAHUN {year}**\n\n"
-        report += f"💰 Total Pemasukan: Rp {total_pemasukan:,}\n"
-        report += f"💸 Total Pengeluaran: Rp {total_pengeluaran:,}\n"
-        report += f"📈 Saldo: Rp {saldo:,}\n\n"
-
-        # Summary bulanan
-        if monthly_summary:
-            report += "📅 **Summary Bulanan:**\n"
-            for month_name in ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-                             'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']:
-                if month_name in monthly_summary:
-                    data = monthly_summary[month_name]
-                    saldo_bulan = data['pemasukan'] - data['pengeluaran']
-                    report += f"• {month_name}: Rp {saldo_bulan:,}\n"
-            report += "\n"
-
-        # Top 5 kategori pengeluaran
-        if kategori_pengeluaran:
-            report += "🔝 **Top 5 Kategori Pengeluaran:**\n"
-            sorted_pengeluaran = sorted(kategori_pengeluaran.items(), key=lambda x: x[1], reverse=True)
-            for i, (kat, jumlah) in enumerate(sorted_pengeluaran[:5], 1):
-                report += f"{i}. {kat}: Rp {jumlah:,}\n"
-            report += "\n"
-
-        report += f"📝 Total Transaksi: {len(yearly_data)}"
-
-        await update.message.reply_text(report,parse_mode='Markdown')
-        logger.info(f"📊 Laporan tahunan dikirim: {year} untuk user {update.effective_user.id}")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error saat membuat laporan tahunan: {e}",parse_mode='Markdown')
-        logger.error(f"❌ Error laporan tahunan: {e}", exc_info=True)
+def get_laporan_service(sheets_service: GoogleSheetsService) -> LaporanService:
+    """Get or create laporan service instance."""
+    global laporan_service
+    if laporan_service is None:
+        laporan_service = LaporanService(sheets_service)
+    return laporan_service

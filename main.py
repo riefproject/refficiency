@@ -17,29 +17,24 @@ from services.gsheets import GoogleSheetsService
 from services.gemini import GeminiService
 from handlers.start import start
 from handlers.error import error_handler
+from handlers.laporan import get_laporan_service
 from models.transaction import Transaction
-
-# Refaktor ini mengasumsikan Anda akan mengubah handlers.laporan menjadi sebuah fungsi
-# yang bisa diimpor dan dipanggil, contohnya: from handlers.laporan import generate_report
-# Untuk saat ini, kita akan buat placeholder-nya.
 
 # Setup awal
 os.system("clear")
 logger = setup_logging()
 
 # Basis data sederhana di memori untuk menyimpan preferensi bahasa pengguna.
-# Untuk aplikasi produksi, disarankan menggunakan database persisten.
 user_language_preferences = {}
 
 # Inisialisasi layanan-layanan utama
 try:
     gemini_service = GeminiService()
     sheets_service = GoogleSheetsService()
-    logger.info("✅ Layanan Gemini dan Google Sheets berhasil diinisialisasi.")
+    laporan_service = get_laporan_service(sheets_service)  # Add laporan service
+    logger.info("✅ Layanan Gemini, Google Sheets, dan Laporan berhasil diinisialisasi.")
 except Exception as e:
     logger.critical(f"❌ Gagal menginisialisasi layanan: {e}")
-    # Jika layanan inti gagal, bot tidak bisa berjalan dengan semestinya.
-    # Anda bisa memutuskan untuk keluar dari aplikasi di sini jika perlu.
 
 
 async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -48,15 +43,13 @@ async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     Menyimpan preferensi bahasa pengguna dan mengirim konfirmasi.
     """
     query = update.callback_query
-    await query.answer()  # Memberi tahu Telegram bahwa callback sudah diterima
+    await query.answer()
 
-    # Ekstrak kode bahasa dari data callback (misal: 'set_lang_id' -> 'id')
     lang_code = query.data.split('_')[-1]
     user_id = query.from_user.id
     user_language_preferences[user_id] = lang_code
     logger.info(f"Pengguna {user_id} memilih bahasa: {lang_code.upper()}")
 
-    # Edit pesan asli untuk menampilkan pesan konfirmasi
     await query.edit_message_text(text=MESSAGES[lang_code]['language_set'])
 
 
@@ -69,7 +62,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_text = update.message.text
     logger.info(f"Menerima pesan dari {user_id}: '{user_text}'")
 
-    # Dapatkan preferensi bahasa pengguna, default ke 'id' jika belum ada
     lang = user_language_preferences.get(user_id, 'id')
 
     # Kirim teks ke Gemini untuk diproses
@@ -79,38 +71,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     intent = structured_data.get("intent")
     entities = structured_data.get("entities", {})
     
-    # Debug: Log the entities to see what's actually being returned
     logger.info(f"Intent: {intent}, Entities: {entities}")
 
     # Logika untuk menangani setiap niat (intent) dari Gemini
     if intent == "catat":
         try:
-            # Debug: Check what keys are actually in entities
             logger.info(f"Available keys in entities: {list(entities.keys())}")
             
-            # Pastikan entitas yang dibutuhkan ada
             if not all(k in entities for k in ['transaction_type', 'category', 'amount']):
                 missing_keys = [k for k in ['transaction_type', 'category', 'amount'] if k not in entities]
                 raise ValueError(f"Data '{', '.join(missing_keys)}' tidak ditemukan dari input. Available: {list(entities.keys())}")
 
             # Create Transaction object using positional arguments
-            # Use today's date if no date provided
             tanggal = entities.get('date') or datetime.now().strftime('%Y-%m-%d')
             
             tx = Transaction(
-                tanggal,  # positional argument 1
-                entities.get('transaction_type'),  # positional argument 2
-                entities.get('category'),  # positional argument 3
-                int(entities.get('amount')),  # positional argument 4
-                entities.get('description') or ""  # positional argument 5
+                tanggal,
+                entities.get('transaction_type'),
+                entities.get('category'),
+                int(entities.get('amount')),
+                entities.get('description') or ""
             )
-            tx.validate()  # Jalankan validasi pada model
+            tx.validate()
 
-            # FIXED: Convert Transaction object to dictionary format expected by Google Sheets
+            # Convert Transaction object to dictionary format expected by Google Sheets
             transaction_dict = tx.to_sheet_data()
             logger.info(f"Transaction data for sheets: {transaction_dict}")
 
-            # Simpan transaksi ke Google Sheets dan update dashboard
             sheets_service.add_transaction(transaction_dict)
             sheets_service.update_dashboard_data()
             logger.info(f"Transaksi berhasil dicatat untuk pengguna {user_id}")
@@ -126,7 +113,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     elif intent == "laporan":
         logger.info(f"Niat 'laporan' terdeteksi untuk pengguna {user_id}")
-        await update.message.reply_text("Fitur laporan via AI sedang dalam pengembangan. Nantikan pembaruan selanjutnya!")
+        try:
+            # Extract report parameters
+            period = entities.get('period', 'bulanan')
+            year = entities.get('year')
+            month = entities.get('month')
+            
+            logger.info(f"Generating report: period={period}, year={year}, month={month}")
+            
+            # Generate report using laporan service
+            report_text = laporan_service.generate_report(period, year, month)
+            
+            # Send report (split if too long for Telegram)
+            if len(report_text) > 4096:
+                # Split long reports into chunks
+                chunks = [report_text[i:i+4096] for i in range(0, len(report_text), 4096)]
+                for i, chunk in enumerate(chunks):
+                    if i == 0:
+                        await update.message.reply_text(chunk,  parse_mode='Markdown')
+                    else:
+                        await update.message.reply_text(f"*LANJUTAN {i+1}*\n\n{chunk}",  parse_mode='Markdown')
+            else:
+                await update.message.reply_text(report_text,  parse_mode='Markdown')
+            
+            logger.info(f"Laporan berhasil dikirim untuk pengguna {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Error saat membuat laporan: {e}")
+            await update.message.reply_text(f"❌ Gagal membuat laporan: {str(e)}")
 
     elif intent == "tidak_paham":
         logger.warning(f"Gemini tidak dapat memahami input dari {user_id}: '{user_text}'")
@@ -148,7 +162,6 @@ def main():
         logger.critical("❌ TELEGRAM_BOT_TOKEN tidak ditemukan. Bot tidak bisa dijalankan.")
         return
 
-    # Inisialisasi koneksi Google Sheets saat bot dimulai
     if not sheets_service.init_connection():
         logger.warning("⚠️ Koneksi ke Google Sheets gagal saat inisialisasi.")
 

@@ -16,10 +16,13 @@ class GeminiService:
 
     def get_prompt(self):
         today_date = datetime.now().strftime('%Y-%m-%d')
+        current_month = datetime.now().month
+        current_year = datetime.now().year
+        
         return f"""
         Anda adalah asisten cerdas untuk bot pencatat keuangan bernama Reefficiency.
         Tugas Anda adalah menganalisis teks dari pengguna dan mengubahnya menjadi format JSON yang terstruktur.
-        Tanggal hari ini adalah: {today_date}. Jika pengguna menyebut "hari ini", gunakan tanggal ini.
+        Tanggal hari ini adalah: {today_date}. Bulan sekarang: {current_month}. Tahun sekarang: {current_year}.
         
         Ada dua jenis niat (intent) yang mungkin: 'catat' (untuk mencatat transaksi) dan 'laporan' (untuk meminta laporan).
 
@@ -31,22 +34,35 @@ class GeminiService:
         - "date": (opsional) tanggal dalam format YYYY-MM-DD. Jika tidak ada, gunakan null.
 
         Untuk intent 'laporan', ekstrak entitas berikut:
-        - "period": bisa 'bulanan' atau 'tahunan'.
-        - "year": (opsional) tahun laporan dalam format YYYY.
-        - "month": (opsional) bulan laporan dalam bentuk angka (1-12).
+        - "period": 'bulanan' atau 'tahunan'.
+        - "year": (opsional) tahun laporan dalam format YYYY. Jika tidak disebutkan, gunakan tahun sekarang.
+        - "month": (opsional) bulan laporan dalam bentuk angka (1-12). Hanya untuk laporan bulanan. Jika tidak disebutkan, gunakan bulan sekarang.
 
-        Contoh:
-        Input Pengguna: "Tolong catat pengeluaran untuk bensin 150 ribu kemarin"
-        Output JSON: {{"intent": "catat", "entities": {{"transaction_type": "pengeluaran", "category": "bensin", "amount": 150000, "description": null, "date": "2025-06-16"}}}}
+        Contoh untuk CATAT:
+        Input: "catat pengeluaran bensin 150 ribu kemarin"
+        Output: {{"intent": "catat", "entities": {{"transaction_type": "pengeluaran", "category": "bensin", "amount": 150000, "description": null, "date": "2025-06-16"}}}}
 
-        Input Pengguna: "catat pemasukan 20000 gaji"
-        Output JSON: {{"intent": "catat", "entities": {{"transaction_type": "pemasukan", "category": "gaji", "amount": 20000, "description": null, "date": null}}}}
+        Input: "saya baru saja membeli hp baru seharga 15.000.000 dan laptop seharga 20.000.000"
+        Output: {{"intent": "catat", "entities": {{"transaction_type": "pengeluaran", "category": "elektronik", "amount": 35000000, "description": "hp baru dan laptop", "date": null}}}}
 
-        Input Pengguna: "pemasukan dari freelance 1.2jt"
-        Output JSON: {{"intent": "catat", "entities": {{"transaction_type": "pemasukan", "category": "freelance", "amount": 1200000, "description": null, "date": null}}}}
-        
-        Input Pengguna: "saya baru saja membeli hp baru seharga 15.000.000 dan laptop seharga 20.000.000"
-        Output JSON: {{"intent": "catat", "entities": {{"transaction_type": "pengeluaran", "category": "elektronik", "amount": 35000000, "description": "hp baru dan laptop", "date": null}}}}
+        Contoh untuk LAPORAN:
+        Input: "laporan bulan ini"
+        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": {current_year}, "month": {current_month}}}}}
+
+        Input: "laporan tahun 2024"
+        Output: {{"intent": "laporan", "entities": {{"period": "tahunan", "year": 2024, "month": null}}}}
+
+        Input: "laporan januari 2025"
+        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": 2025, "month": 1}}}}
+
+        Input: "laporan bulanan februari"
+        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": {current_year}, "month": 2}}}}
+
+        Input: "laporan tahunan"
+        Output: {{"intent": "laporan", "entities": {{"period": "tahunan", "year": {current_year}, "month": null}}}}
+
+        Input: "minta laporan keuangan bulan lalu"
+        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": {current_year}, "month": {current_month - 1 if current_month > 1 else 12}}}}}
 
         Jika Anda tidak dapat memahami permintaan pengguna, kembalikan JSON dengan intent 'tidak_paham'.
         Output harus HANYA berupa JSON yang valid tanpa teks tambahan.
