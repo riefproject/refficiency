@@ -118,10 +118,10 @@ class GoogleSheetsService:
             logger.info(f"🆕 Worksheet '{sheet_name}' not found. Creating a new one.")
             worksheet = self.spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
             
-            # Add headers to the newly created sheet.
-            headers = ["Tanggal", "Kategori", "Deskripsi", "Pemasukan", "Pengeluaran"]
+            # Add headers in English (updated)
+            headers = ["Date", "Category", "Description", "Income", "Expenditure"]
             worksheet.append_row(headers)
-            logger.info(f"✅ Created new sheet '{sheet_name}' and added headers.")
+            logger.info(f"✅ Created new sheet '{sheet_name}' and added English headers.")
             return worksheet
             
         except Exception as e:
@@ -138,7 +138,7 @@ class GoogleSheetsService:
         
         Args:
             transaction_data (dict): A dictionary containing transaction details.
-                                     Must include a "Tanggal" key in 'YYYY-MM-DD' format.
+                                     Must include a "Date" key in 'YYYY-MM-DD' format.
         
         Returns:
             bool: True if the transaction was added successfully, otherwise it raises an exception.
@@ -151,9 +151,9 @@ class GoogleSheetsService:
             
         try:
             # Extract the date from the transaction data to determine the target sheet.
-            date_value = transaction_data.get("Tanggal")
+            date_value = transaction_data.get("Date")  # Changed from "Tanggal"
             if not date_value:
-                raise Exception("Transaction date ('Tanggal') not found in the provided data.")
+                raise Exception("Transaction date ('Date') not found in the provided data.")
             
             # Determine the target sheet name (e.g., "6/25") from the date.
             sheet_name = self.get_sheet_name_from_date(str(date_value).split(" ")[0])
@@ -167,10 +167,11 @@ class GoogleSheetsService:
             headers = worksheet.row_values(1)
             if not headers:
                 # This is a fallback, as get_or_create_sheet should have already added headers.
-                headers = ["Tanggal", "Kategori", "Deskripsi", "Pemasukan", "Pengeluaran"]
+                headers = ["Date", "Category", "Description", "Income", "Expenditure"]
                 worksheet.append_row(headers)
                 logger.warning(f"Headers were missing in sheet '{sheet_name}' and have been recreated.")
             
+            logger.info(f"📊 Sheet headers: {headers}")
             logger.info(f"📊 Preparing to add transaction to sheet '{sheet_name}': {transaction_data}")
             
             # Prepare the new row by mapping dictionary keys to header positions.
@@ -180,7 +181,7 @@ class GoogleSheetsService:
                 if key in headers:
                     index = headers.index(key)
                     # For dates, ensure only the 'YYYY-MM-DD' part is stored.
-                    if key == "Tanggal" and value and " " in str(value):
+                    if key == "Date" and value and " " in str(value):  # Changed from "Tanggal"
                         value = str(value).split(" ")[0]
                     new_row[index] = str(value) if value is not None else ""
             
@@ -405,7 +406,8 @@ class GoogleSheetsService:
             
             for row in all_data:
                 # Process income, safely handling non-numeric or empty values.
-                income_val = row.get('Pemasukan', '')
+                # Updated to use English headers
+                income_val = row.get('Income', '')  # Changed from 'Pemasukan'
                 if income_val and str(income_val).strip():
                     try:
                         total_income += float(str(income_val).replace(',', ''))
@@ -413,13 +415,13 @@ class GoogleSheetsService:
                         pass # Ignore cells that cannot be converted to float.
                 
                 # Process expenditure and aggregate by category.
-                expenditure_val = row.get('Pengeluaran', '')
+                expenditure_val = row.get('Expenditure', '')  # Changed from 'Pengeluaran'
                 if expenditure_val and str(expenditure_val).strip():
                     try:
                         amount = float(str(expenditure_val).replace(',', ''))
                         total_expenditure += amount
                         
-                        category = row.get('Kategori', 'Uncategorized')
+                        category = row.get('Category', 'Uncategorized')  # Changed from 'Kategori'
                         categories[category] = categories.get(category, 0.0) + amount
                     except (ValueError, TypeError):
                         pass # Ignore cells that cannot be converted to float.

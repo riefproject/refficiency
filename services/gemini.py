@@ -3,6 +3,7 @@ import json
 import logging
 from config.settings import GEMINI_API_KEY
 from datetime import datetime
+from models.category import TransactionCategory
 
 # Setup logger for this service
 logger = logging.getLogger(__name__)
@@ -19,65 +20,67 @@ class GeminiService:
         current_month = datetime.now().month
         current_year = datetime.now().year
         
-        return f"""
-        Anda adalah asisten cerdas untuk bot pencatat keuangan bernama Reefficiency.
-        Tugas Anda adalah menganalisis teks dari pengguna dan mengubahnya menjadi format JSON yang terstruktur.
-        Tanggal hari ini adalah: {today_date}. Bulan sekarang: {current_month}. Tahun sekarang: {current_year}.
+        # Get available categories for the prompt
+        categories = [cat.value for cat in TransactionCategory]
+        categories_str = ", ".join(categories)
         
-        Ada dua jenis niat (intent) yang mungkin: 'catat' (untuk mencatat transaksi) dan 'laporan' (untuk meminta laporan).
+        return f"""
+        You are an intelligent assistant for Reefficiency financial tracking bot.
+        Your task is to analyze user text and convert it into structured JSON format.
+        Today's date: {today_date}. Current month: {current_month}. Current year: {current_year}.
+        
+        Available standard categories: {categories_str}
+        
+        IMPORTANT RULES:
+        1. If user mentions multiple items, create SEPARATE transactions for each item
+        2. Use ONLY the standard categories provided above
+        3. Map Indonesian keywords to appropriate English categories
+        4. For multiple transactions, return an array of transaction objects
+        
+        There are two types of intent: 'catat' (record transaction) and 'laporan' (request report).
 
-        Untuk intent 'catat', ekstrak entitas berikut:
-        - "transaction_type": harus 'pemasukan' atau 'pengeluaran'.
-        - "category": kategori transaksi (misal: 'makan siang', 'gaji', 'transportasi').
-        - "amount": jumlah dalam bentuk angka integer. Abaikan 'ribu', 'juta', 'k', dll dan konversikan ke angka penuh.
-        - "description": (opsional) deskripsi tambahan.
-        - "date": (opsional) tanggal dalam format YYYY-MM-DD. Jika tidak ada, gunakan null.
+        For 'catat' intent, extract these entities:
+        - "transaction_type": must be 'income' or 'expense' (English only)
+        - "category": use only from the standard categories list above
+        - "amount": amount as integer. Convert 'ribu', 'juta', 'k' to full numbers
+        - "description": (optional) additional description
+        - "date": (optional) date in YYYY-MM-DD format. If not specified, use null
+        - "transactions": array of transaction objects if multiple items detected
 
-        Untuk intent 'laporan', ekstrak entitas berikut:
-        - "period": 'bulanan' atau 'tahunan'.
-        - "year": (opsional) tahun laporan dalam format YYYY. Jika tidak disebutkan, gunakan tahun sekarang.
-        - "month": (opsional) bulan laporan dalam bentuk angka (1-12). Hanya untuk laporan bulanan. Jika tidak disebutkan, gunakan bulan sekarang.
+        For 'laporan' intent, extract these entities:
+        - "period": 'monthly' or 'yearly' (English only)
+        - "year": (optional) report year in YYYY format
+        - "month": (optional) report month as number (1-12)
 
-        Contoh untuk CATAT:
-        Input: "catat pengeluaran bensin 150 ribu kemarin"
-        Output: {{"intent": "catat", "entities": {{"transaction_type": "pengeluaran", "category": "bensin", "amount": 150000, "description": null, "date": "2025-06-16"}}}}
+        Examples for SINGLE transaction:
+        Input: "catat pengeluaran bensin 150 ribu"
+        Output: {{"intent": "catat", "entities": {{"transaction_type": "expense", "category": "transportation", "amount": 150000, "description": "bensin", "date": null}}}}
 
-        Input: "saya baru saja membeli hp baru seharga 15.000.000 dan laptop seharga 20.000.000"
-        Output: {{"intent": "catat", "entities": {{"transaction_type": "pengeluaran", "category": "elektronik", "amount": 35000000, "description": "hp baru dan laptop", "date": null}}}}
+        Examples for MULTIPLE transactions:
+        Input: "saya beli baju 100 ribu dan celana 50 ribu"
+        Output: {{"intent": "catat", "entities": {{"transactions": [{{"transaction_type": "expense", "category": "shopping_clothing", "amount": 100000, "description": "baju", "date": null}}, {{"transaction_type": "expense", "category": "shopping_clothing", "amount": 50000, "description": "celana", "date": null}}]}}}}
 
-        Contoh untuk LAPORAN:
+        Input: "beli laptop 15 juta dan mouse 500 ribu"
+        Output: {{"intent": "catat", "entities": {{"transactions": [{{"transaction_type": "expense", "category": "electronics", "amount": 15000000, "description": "laptop", "date": null}}, {{"transaction_type": "expense", "category": "electronics", "amount": 500000, "description": "mouse", "date": null}}]}}}}
+
+        Report examples:
         Input: "laporan bulan ini"
-        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": {current_year}, "month": {current_month}}}}}
+        Output: {{"intent": "laporan", "entities": {{"period": "monthly", "year": {current_year}, "month": {current_month}}}}}
 
-        Input: "laporan tahun 2024"
-        Output: {{"intent": "laporan", "entities": {{"period": "tahunan", "year": 2024, "month": null}}}}
-
-        Input: "laporan januari 2025"
-        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": 2025, "month": 1}}}}
-
-        Input: "laporan bulanan februari"
-        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": {current_year}, "month": 2}}}}
-
-        Input: "laporan tahunan"
-        Output: {{"intent": "laporan", "entities": {{"period": "tahunan", "year": {current_year}, "month": null}}}}
-
-        Input: "minta laporan keuangan bulan lalu"
-        Output: {{"intent": "laporan", "entities": {{"period": "bulanan", "year": {current_year}, "month": {current_month - 1 if current_month > 1 else 12}}}}}
-
-        Jika Anda tidak dapat memahami permintaan pengguna, kembalikan JSON dengan intent 'tidak_paham'.
-        Output harus HANYA berupa JSON yang valid tanpa teks tambahan.
+        If you cannot understand the request, return JSON with intent 'unclear'.
+        Output should be ONLY valid JSON without additional text.
         """
 
     async def process_text(self, text: str) -> dict:
         prompt = self.get_prompt()
-        full_prompt = f"{prompt}\n\nInput Pengguna: \"{text}\"\nOutput JSON:"
+        full_prompt = f"{prompt}\n\nUser Input: \"{text}\"\nJSON Output:"
 
         try:
             logger.info(f"Sending to Gemini: {text}")
             response = self.model.generate_content(full_prompt)
             logger.info(f"Raw Gemini response: {response.text}")
             
-            # Membersihkan output agar hanya JSON yang tersisa
+            # Clean output to keep only JSON
             cleaned_response = response.text.strip().replace('```json', '').replace('```', '').strip()
             logger.info(f"Cleaned response: {cleaned_response}")
             

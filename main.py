@@ -76,33 +76,77 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Logika untuk menangani setiap niat (intent) dari Gemini
     if intent == "catat":
         try:
-            logger.info(f"Available keys in entities: {list(entities.keys())}")
-            
-            if not all(k in entities for k in ['transaction_type', 'category', 'amount']):
-                missing_keys = [k for k in ['transaction_type', 'category', 'amount'] if k not in entities]
-                raise ValueError(f"Data '{', '.join(missing_keys)}' tidak ditemukan dari input. Available: {list(entities.keys())}")
+            # Check if multiple transactions
+            if "transactions" in entities:
+                # Handle multiple transactions
+                success_count = 0
+                for tx_data in entities["transactions"]:
+                    try:
+                        tanggal = tx_data.get('date') or datetime.now().strftime('%Y-%m-%d')
+                        
+                        # Convert English transaction_type back to Indonesian for Transaction class
+                        jenis = "pemasukan" if tx_data.get('transaction_type') == 'income' else "pengeluaran"
+                        
+                        tx = Transaction(
+                            tanggal,
+                            jenis,
+                            tx_data.get('category'),
+                            int(tx_data.get('amount')),
+                            tx_data.get('description') or ""
+                        )
+                        tx.validate()
 
-            # Create Transaction object using positional arguments
-            tanggal = entities.get('date') or datetime.now().strftime('%Y-%m-%d')
-            
-            tx = Transaction(
-                tanggal,
-                entities.get('transaction_type'),
-                entities.get('category'),
-                int(entities.get('amount')),
-                entities.get('description') or ""
-            )
-            tx.validate()
+                        # Convert Transaction object to dictionary format expected by Google Sheets
+                        transaction_dict = tx.to_sheet_data()
+                        logger.info(f"Transaction data for sheets: {transaction_dict}")
 
-            # Convert Transaction object to dictionary format expected by Google Sheets
-            transaction_dict = tx.to_sheet_data()
-            logger.info(f"Transaction data for sheets: {transaction_dict}")
+                        sheets_service.add_transaction(transaction_dict)
+                        success_count += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing individual transaction: {e}")
+                        continue
+                
+                if success_count > 0:
+                    sheets_service.update_dashboard_data()
+                    await update.message.reply_text(
+                        MESSAGES[lang]['catat_success_multiple'].format(count=success_count)
+                    )
+                else:
+                    await update.message.reply_text(MESSAGES[lang]['error_catat'])
+                    
+            else:
+                # Handle single transaction (existing logic)
+                logger.info(f"Available keys in entities: {list(entities.keys())}")
+                
+                if not all(k in entities for k in ['transaction_type', 'category', 'amount']):
+                    missing_keys = [k for k in ['transaction_type', 'category', 'amount'] if k not in entities]
+                    raise ValueError(f"Data '{', '.join(missing_keys)}' tidak ditemukan dari input. Available: {list(entities.keys())}")
 
-            sheets_service.add_transaction(transaction_dict)
-            sheets_service.update_dashboard_data()
-            logger.info(f"Transaksi berhasil dicatat untuk pengguna {user_id}")
+                # Create Transaction object using positional arguments
+                tanggal = entities.get('date') or datetime.now().strftime('%Y-%m-%d')
+                
+                # Convert English transaction_type back to Indonesian for Transaction class
+                jenis = "pemasukan" if entities.get('transaction_type') == 'income' else "pengeluaran"
+                
+                tx = Transaction(
+                    tanggal,
+                    jenis,
+                    entities.get('category'),
+                    int(entities.get('amount')),
+                    entities.get('description') or ""
+                )
+                tx.validate()
 
-            await update.message.reply_text(MESSAGES[lang]['catat_success'])
+                # Convert Transaction object to dictionary format expected by Google Sheets
+                transaction_dict = tx.to_sheet_data()
+                logger.info(f"Transaction data for sheets: {transaction_dict}")
+
+                sheets_service.add_transaction(transaction_dict)
+                sheets_service.update_dashboard_data()
+                logger.info(f"Transaksi berhasil dicatat untuk pengguna {user_id}")
+
+                await update.message.reply_text(MESSAGES[lang]['catat_success'])
 
         except (ValueError, TypeError) as e:
             logger.error(f"Error validasi data saat mencatat: {e}")
