@@ -1,0 +1,15 @@
+# Pondasi Kritis
+grpcio==1.64.1
+protobuf==4.25.3
+
+# Dependensi Google (versi stabil yang kompatibel)
+google-api-core==2.19.0
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+googleapis-common-protos==1.63.0
+google-api-python-client
+
+# Paket Utama & Aplikasi
+gspread
+google-ai-generativelanguage
+google-generativeai
